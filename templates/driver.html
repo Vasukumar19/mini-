@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+  <title>🚑 Ambulance Driver — {{ driver_id }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    :root {
+      --bg:     #060a12;
+      --card:   #0f1828;
+      --card2:  #162038;
+      --border: #1c2b44;
+      --accent: #00d4ff;
+      --green:  #00ff88;
+      --amber:  #ffcc00;
+      --red:    #ff3355;
+      --purple: #a78bfa;
+      --text:   #e8edf5;
+      --muted:  #3a5070;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; }
+    body { display: flex; flex-direction: column; align-items: center; }
+    .container { width: 100%; max-width: 480px; display: flex; flex-direction: column; min-height: 100vh; }
+
+    /* ── Top bar ── */
+    .topbar {
+      background: linear-gradient(135deg, #0a1020, #0f1830);
+      border-bottom: 2px solid var(--border);
+      padding: 13px 18px; display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 20;
+    }
+    .amb-badge {
+      font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700;
+      background: rgba(0,212,255,.1); border: 1px solid var(--accent);
+      color: var(--accent); border-radius: 20px; padding: 5px 14px; letter-spacing: 1px;
+    }
+    .status-pill {
+      font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+      color: var(--muted); transition: color .3s;
+    }
+    .status-pill.active  { color: var(--green); animation: blink 2s ease infinite; }
+    .status-pill.arrived { color: var(--amber); }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .topbar-hosp { font-size: 11px; color: var(--muted); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Dispatch Screen ── */
+    #dispatch-screen { padding: 22px 18px; display: flex; flex-direction: column; gap: 18px; }
+    .d-title { font-size: 22px; font-weight: 800; text-align: center; background: linear-gradient(135deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .d-sub   { font-size: 12px; color: var(--muted); text-align: center; margin-top: 4px; }
+    .fld-lbl { font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
+    select, input { width: 100%; padding: 13px 14px; background: var(--card); border: 1px solid var(--border); color: var(--text); border-radius: 10px; font-family: 'Inter', sans-serif; font-size: 14px; outline: none; transition: border-color .2s; -webkit-appearance: none; }
+    select:focus { border-color: var(--accent); }
+    select option { background: var(--card); }
+    .sev-group { display: flex; gap: 8px; }
+    .sev-btn { flex: 1; padding: 12px 0; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; text-align: center; background: var(--card); border: 2px solid var(--border); color: var(--muted); transition: all .2s; }
+    .sev-btn[data-sev="LOW"].selected   { border-color: var(--green); color: var(--green); background: rgba(0,255,136,.08); }
+    .sev-btn[data-sev="MEDIUM"].selected{ border-color: var(--amber); color: var(--amber); background: rgba(255,204,0,.08); }
+    .sev-btn[data-sev="HIGH"].selected  { border-color: var(--red);   color: var(--red);   background: rgba(255,51,85,.08); box-shadow: 0 0 14px rgba(255,51,85,.2); }
+    .pat-row { display: flex; align-items: center; gap: 12px; }
+    .pat-btn { width: 46px; height: 46px; border-radius: 10px; background: var(--card); border: 1px solid var(--border); color: var(--text); font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .2s; }
+    .pat-btn:hover { background: var(--card2); border-color: var(--accent); }
+    .pat-count { flex: 1; text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 700; color: var(--accent); }
+    .btn-dispatch { padding: 18px; border-radius: 14px; background: linear-gradient(135deg, #ff3355, #cc1133); border: none; color: #fff; font-family: 'Inter', sans-serif; font-size: 16px; font-weight: 800; letter-spacing: 1px; cursor: pointer; box-shadow: 0 6px 24px rgba(255,51,85,.4); transition: all .2s; }
+    .btn-dispatch:hover { transform: translateY(-2px); box-shadow: 0 10px 34px rgba(255,51,85,.55); }
+    .btn-dispatch:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    /* ── Navigation Screen ── */
+    #nav-screen { display: none; flex-direction: column; padding: 14px 18px; gap: 14px; }
+
+    /* Route breadcrumb */
+    .route-strip { display: flex; gap: 4px; overflow-x: auto; padding: 2px 0; scrollbar-width: none; align-items: center; }
+    .route-strip::-webkit-scrollbar { display: none; }
+    .r-pill { flex-shrink: 0; padding: 5px 11px; border-radius: 20px; font-size: 10px; font-weight: 700; font-family: 'JetBrains Mono', monospace; border: 1px solid transparent; transition: all .4s; }
+    .r-pill.done     { background: #0e1828; color: var(--muted); }
+    .r-pill.current  { background: #ffffff; color: #000; box-shadow: 0 0 10px rgba(255,255,255,.3); }
+    .r-pill.upcoming { background: #0a1828; color: var(--accent); border-color: #1c2b44; }
+    .r-pill.hospital { background: rgba(255,51,85,.1); color: var(--red); border-color: rgba(255,51,85,.25); }
+    .r-sep { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+
+    /* Direction card */
+    .dir-card { background: linear-gradient(135deg, var(--card), #0d1f36); border: 1px solid var(--border); border-radius: 18px; padding: 26px 18px; text-align: center; position: relative; overflow: hidden; }
+    .dir-card::before { content: ''; position: absolute; inset: 0; background: radial-gradient(circle at 50% 30%, rgba(0,212,255,.05), transparent 65%); pointer-events: none; }
+
+    /* Traffic light trio */
+    .tl-row { display: flex; gap: 10px; justify-content: center; margin-bottom: 14px; }
+    .tl { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255,255,255,.1); transition: all .4s; }
+    .tl.red   { background: rgba(255,51,85,.25); }
+    .tl.amber { background: rgba(255,204,0,.25); }
+    .tl.green { background: rgba(0,255,136,.25); }
+    .tl.red.on    { background: var(--red);   border-color: rgba(255,255,255,.4); box-shadow: 0 0 14px rgba(255,51,85,.7); }
+    .tl.amber.on  { background: var(--amber); border-color: rgba(255,255,255,.4); box-shadow: 0 0 14px rgba(255,204,0,.7); animation: tlPulse .9s ease infinite; }
+    .tl.green.on  { background: var(--green); border-color: rgba(255,255,255,.4); box-shadow: 0 0 16px rgba(0,255,136,.7); }
+    @keyframes tlPulse { 0%,100%{box-shadow:0 0 14px rgba(255,204,0,.7)} 50%{box-shadow:0 0 22px rgba(255,204,0,1)} }
+
+    .dir-label { font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+
+    /* Big arrow — element updates direction, CSS animates */
+    #direction-arrow { font-size: 90px; line-height: 1; display: block; animation: anim-pulse 1.6s ease-in-out infinite; transition: all .5s cubic-bezier(.34,1.56,.64,1); }
+    @keyframes anim-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.06)} }
+
+    .junc-row { font-size: 14px; color: var(--muted); margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .j-tag { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; background: var(--card2); padding: 3px 10px; border-radius: 8px; color: var(--text); }
+
+    #distance-display { font-family: 'JetBrains Mono', monospace; font-size: 30px; font-weight: 700; margin-top: 10px; background: linear-gradient(135deg, var(--accent), var(--green)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+    /* ETA + Speed row */
+    .stat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stat-card { border-radius: 14px; padding: 14px; background: var(--card); border: 1px solid var(--border); text-align: center; }
+    .stat-v { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 700; }
+    .stat-l { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 3px; }
+
+    /* Progress bar */
+    .prog-bar { height: 6px; background: var(--card2); border-radius: 3px; overflow: hidden; margin-top: 2px; }
+    .prog-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), var(--green)); transition: width 1s ease; }
+    .prog-stats { display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+
+    /* Signal banner */
+    .sig-banner { border-radius: 12px; padding: 14px 18px; text-align: center; font-weight: 700; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; transition: all .4s; }
+    .sig-banner.PREPARING   { background: rgba(255,204,0,.1);  border: 1px solid rgba(255,204,0,.4); color: var(--amber); animation: gAmber 1.5s ease infinite; }
+    .sig-banner.CLEARED     { background: rgba(0,255,136,.1);  border: 1px solid rgba(0,255,136,.4); color: var(--green); box-shadow: 0 0 18px rgba(0,255,136,.18); }
+    .sig-banner.APPROACHING { background: rgba(0,212,255,.1);  border: 1px solid rgba(0,212,255,.4); color: var(--accent); }
+    .sig-banner.LOCKED      { background: rgba(255,51,85,.1);  border: 1px solid rgba(255,51,85,.4); color: var(--red); animation: gRed 1s ease infinite; }
+    @keyframes gAmber { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 14px rgba(255,204,0,.3)} }
+    @keyframes gRed   { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 14px rgba(255,51,85,.4)} }
+
+    /* Reroute banner */
+    #reroute-banner { position: fixed; top: 0; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg, var(--amber), #e59e0a); color: #000; border-radius: 0 0 14px 14px; padding: 11px 22px; font-weight: 800; font-size: 13px; z-index: 100; display: none; animation: sDown .3s ease; white-space: nowrap; }
+    #reroute-banner.show { display: block; }
+    @keyframes sDown { from { transform: translateX(-50%) translateY(-100%); } to { transform: translateX(-50%) translateY(0); } }
+
+    /* ── Arrival Overlay ── */
+    #arrival-overlay {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(4,8,18,.97);
+      display: none; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center; padding: 30px;
+      animation: fadeIn .5s ease;
+    }
+    #arrival-overlay.show { display: flex; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .arr-icon { font-size: 88px; animation: bounce .6s cubic-bezier(.34,1.56,.64,1); }
+    @keyframes bounce { from { transform: scale(0); } to { transform: scale(1); } }
+    .arr-title { font-size: 26px; font-weight: 800; color: var(--green); margin: 14px 0 4px; }
+    .arr-hospital { font-size: 16px; color: rgba(0,255,136,.7); margin-bottom: 24px; }
+    .arr-stats { display: flex; gap: 20px; }
+    .arr-stat { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 28px; text-align: center; }
+    .arr-stat-v { font-family: 'JetBrains Mono', monospace; font-size: 28px; font-weight: 700; color: var(--green); }
+    .arr-stat-l { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+    .arr-note { font-size: 12px; color: var(--muted); margin-top: 24px; border: 1px solid var(--border); padding: 10px 20px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+
+<!-- Reroute banner -->
+<div id="reroute-banner">🔄 REROUTING — new route calculated</div>
+
+<!-- Arrival overlay -->
+<div id="arrival-overlay">
+  <div class="arr-icon">🏥</div>
+  <div class="arr-title">ARRIVED</div>
+  <div class="arr-hospital" id="arrival-hospital-name">Hospital</div>
+  <div class="arr-stats">
+    <div class="arr-stat">
+      <div class="arr-stat-v" id="arrival-time-taken">--</div>
+      <div class="arr-stat-l">Journey Time</div>
+    </div>
+    <div class="arr-stat">
+      <div class="arr-stat-v" id="arrival-time-saved">--</div>
+      <div class="arr-stat-l">Time Saved</div>
+    </div>
+  </div>
+  <div class="arr-note">All signals restored. You may close this tab.</div>
+</div>
+
+<div class="container">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="amb-badge">{{ driver_id }}</span>
+      <span class="status-pill" id="status-pill">STANDBY</span>
+    </div>
+    <span class="topbar-hosp" id="topbar-hosp"></span>
+  </div>
+
+  <!-- ═══ Dispatch Screen ═════════════════════════════════════ -->
+  <div id="dispatch-screen">
+
+    <div>
+      <div class="d-title">🚑 Emergency Dispatch</div>
+      <div class="d-sub">Unit <strong>{{ driver_id }}</strong> — Ready</div>
+    </div>
+
+    <div>
+      <div class="fld-lbl">📍 Accident Location</div>
+      <select id="sel-junction">
+        <option value="J1">J1 — North West</option>
+        <option value="J2">J2 — North Centre-West</option>
+        <option value="J3">J3 — North Centre</option>
+        <option value="J4">J4 — North East 🏥</option>
+        <option value="J5" selected>J5 — Centre West ⭐</option>
+        <option value="J6">J6 — Centre</option>
+        <option value="J7">J7 — West</option>
+        <option value="J8">J8 — Central Hub</option>
+        <option value="J9">J9 — Central East</option>
+        <option value="J10">J10 — East Centre</option>
+        <option value="J11">J11 — East</option>
+        <option value="J12">J12 — South Centre-West</option>
+        <option value="J13">J13 — South Centre</option>
+        <option value="J14">J14 — South West 🏥</option>
+        <option value="J15">J15 — South</option>
+        <option value="J16">J16 — South Centre-East</option>
+        <option value="J17">J17 — South East</option>
+      </select>
+    </div>
+
+    <div>
+      <div class="fld-lbl">🩺 Patient Severity</div>
+      <div class="sev-group">
+        <div class="sev-btn" data-sev="LOW"    onclick="selSev(this)">🟢 LOW</div>
+        <div class="sev-btn" data-sev="MEDIUM" onclick="selSev(this)">🟡 MEDIUM</div>
+        <div class="sev-btn selected" data-sev="HIGH" onclick="selSev(this)">🔴 HIGH</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="fld-lbl">👤 Patient Count</div>
+      <div class="pat-row">
+        <button class="pat-btn" onclick="chgPat(-1)">−</button>
+        <div class="pat-count" id="pat-num">1</div>
+        <button class="pat-btn" onclick="chgPat(1)">+</button>
+      </div>
+    </div>
+
+    <button class="btn-dispatch" id="btn-dispatch" onclick="doDispatch()">
+      🚑 DISPATCH AMBULANCE
+    </button>
+
+  </div><!-- /dispatch-screen -->
+
+  <!-- ═══ Navigation Screen ══════════════════════════════════ -->
+  <div id="nav-screen">
+
+    <!-- Route breadcrumb -->
+    <div class="route-strip" id="route-strip"></div>
+
+    <!-- Direction card -->
+    <div class="dir-card">
+      <!-- Traffic light indicators -->
+      <div class="tl-row">
+        <div class="tl red"   id="tl-red"></div>
+        <div class="tl amber" id="tl-amber"></div>
+        <div class="tl green" id="tl-green"></div>
+      </div>
+      <div class="dir-label">NEXT DIRECTION</div>
+      <span id="direction-arrow" style="color:#00d4ff">↑</span>
+      <div class="junc-row">
+        <span class="j-tag" id="j-from">—</span>
+        <span style="color:var(--accent);font-size:16px">→</span>
+        <span class="j-tag" id="j-to">—</span>
+      </div>
+      <div id="distance-display">— m</div>
+    </div>
+
+    <!-- ETA + Speed -->
+    <div class="stat-row">
+      <div class="stat-card">
+        <div class="stat-v" id="eta-display" style="color:var(--accent)">--</div>
+        <div class="stat-l">⏱ ETA to Hospital</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-v" id="speed-display" style="color:var(--green)">--</div>
+        <div class="stat-l">🚀 Speed km/h</div>
+      </div>
+    </div>
+
+    <!-- Progress bar -->
+    <div>
+      <div class="prog-bar"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+      <div class="prog-stats">
+        <span id="prog-jcts">0 / 0 junctions</span>
+        <span id="prog-pct">0%</span>
+      </div>
+    </div>
+
+    <!-- Signal status banner -->
+    <div class="sig-banner PREPARING" id="signal-banner">🟡 Preparing Signal Corridor…</div>
+
+  </div><!-- /nav-screen -->
+
+</div><!-- /container -->
+
+<script>
+/* ═══ Config ═════════════════════════════════════════════════ */
+const DRIVER_ID = "{{ driver_id }}";
+
+/* ═══ State ══════════════════════════════════════════════════ */
+let selSev_val   = 'HIGH';
+let patCount     = 1;
+let route        = [];
+let directions   = [];
+let curStep      = 0;
+let hospName     = '';
+let etaSecs      = 0;
+let dispatchedAt = 0;
+let advTimer     = null;
+
+/* ═══ Arrow map ══════════════════════════════════════════════ */
+const ARROWS = {
+  STRAIGHT: { ch: '↑', color: '#00d4ff' },
+  LEFT:     { ch: '←', color: '#a78bfa' },
+  RIGHT:    { ch: '→', color: '#a78bfa' },
+  ARRIVED:  { ch: '✓', color: '#00ff88' },
+};
+
+/* ═══ Socket ═════════════════════════════════════════════════ */
+const socket = io();
+socket.on('connect', () => socket.emit('register_driver', { driver_id: DRIVER_ID }));
+
+/* ── Route assigned (dispatch confirmed) ──────────────────── */
+socket.on('route_assigned', data => {
+  route        = data.route || [];
+  directions   = data.directions || [];
+  hospName     = data.hospital_name || data.hospital || 'Hospital';
+  etaSecs      = data.eta_seconds || 0;
+  curStep      = 0;
+  dispatchedAt = Date.now();
+
+  document.getElementById('status-pill').textContent  = 'EN ROUTE';
+  document.getElementById('status-pill').className    = 'status-pill active';
+  document.getElementById('topbar-hosp').textContent  = '→ ' + hospName;
+
+  showNav();
+  renderStrip();
+  applyArrow(0);
+  updateProg();
+  document.getElementById('eta-display').textContent   = fmtT(etaSecs);
+  document.getElementById('speed-display').textContent = '50';
+
+  setSig('PREPARING');
+
+  // Auto-advance every 8s (fallback when no SUMO position events)
+  clearInterval(advTimer);
+  advTimer = setInterval(autoAdvance, 8000);
+});
+
+/* ── Real position update from server ────────────────────── */
+socket.on('position_update', data => {
+  // 1. Speed
+  const spd = data.speed_kmh;
+  document.getElementById('speed-display').textContent = spd > 0 ? Math.round(spd) : 'STOPPED';
+
+  // 2. ETA
+  if (data.eta_seconds) {
+    etaSecs = data.eta_seconds;
+    document.getElementById('eta-display').textContent = fmtT(etaSecs);
+  }
+
+  // 3. Distance
+  const d = data.distance_remaining;
+  if (d != null) document.getElementById('distance-display').textContent = fmtD(d);
+
+  // 4. Junction display
+  const curJ = data.current_junction;
+  const nxtJ = data.next_junction;
+  if (curJ) document.getElementById('j-from').textContent = curJ;
+  if (nxtJ) document.getElementById('j-to').textContent   = nxtJ || '🏥';
+
+  // 5. Advance step — use current_junction to find matching route index
+  if (curJ && route.length) {
+    const idx = route.indexOf(curJ);
+    if (idx >= 0 && idx !== curStep) {
+      curStep = idx;
+      applyArrow(curStep);
+      renderStrip();
+      updateProg();
+    }
+  }
+
+  // 6. Turn (direction arrow)
+  if (data.next_turn) applyTurn(data.next_turn);
+});
+
+/* ── Signal events ────────────────────────────────────────── */
+socket.on('signal_update', data => {
+  const st = (data.status || '').toUpperCase();
+  setSig(st === 'PREPARING' ? 'PREPARING' : 'APPROACHING');
+});
+
+socket.on('signal_changed', data => {
+  if      (data.new_state === 'AMBULANCE_GREEN')  setSig('CLEARED');
+  else if (data.new_state === 'SPILLBACK_LOCKED') setSig('LOCKED');
+  else if (data.new_state === 'NORMAL')           setSig('CLEARED');
+});
+
+/* ── Reroute ──────────────────────────────────────────────── */
+socket.on('reroute', data => {
+  route      = data.new_route || route;
+  directions = data.directions || directions;
+  etaSecs    = data.new_eta || etaSecs;
+  curStep    = Math.min(curStep, route.length - 1);
+  renderStrip();
+  applyArrow(curStep);
+  updateProg();
+  document.getElementById('eta-display').textContent = fmtT(etaSecs);
+  showReroute('Saves ' + Math.round(data.time_saved || 0) + 's');
+});
+
+/* ── Arrival ──────────────────────────────────────────────── */
+socket.on('arrived', data => {
+  clearInterval(advTimer);
+  document.getElementById('status-pill').textContent = 'ARRIVED';
+  document.getElementById('status-pill').className   = 'status-pill arrived';
+  document.getElementById('arrival-hospital-name').textContent = data.hospital_name || hospName;
+  document.getElementById('arrival-time-taken').textContent = fmtT(data.time_taken);
+  document.getElementById('arrival-time-saved').textContent = data.time_saved ? '−' + fmtT(data.time_saved) : '—';
+  document.getElementById('arrival-overlay').classList.add('show');
+  setTimeout(() => socket.disconnect(), 1200);
+});
+
+/* ═══ Dispatch ════════════════════════════════════════════════ */
+function doDispatch() {
+  const junc = document.getElementById('sel-junction').value;
+  const btn  = document.getElementById('btn-dispatch');
+  btn.disabled    = true;
+  btn.textContent = '⏳ Dispatching…';
+  socket.emit('dispatch', { driver_id: DRIVER_ID, junction: junc, severity: selSev_val, patients: patCount });
+}
+
+function selSev(el) {
+  document.querySelectorAll('.sev-btn').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+  selSev_val = el.dataset.sev;
+}
+
+function chgPat(d) {
+  patCount = Math.min(10, Math.max(1, patCount + d));
+  document.getElementById('pat-num').textContent = patCount;
+}
+
+/* ═══ Auto-advance (fallback) ════════════════════════════════ */
+function autoAdvance() {
+  if (!route.length) return;
+  etaSecs = Math.max(0, etaSecs - 8);
+  document.getElementById('eta-display').textContent = fmtT(etaSecs);
+
+  if (curStep < route.length - 1) {
+    curStep++;
+    applyArrow(curStep);
+    renderStrip();
+    updateProg();
+    socket.emit('reroute_check', { driver_id: DRIVER_ID, current_junction: route[curStep] });
+
+    // Cycle signal state nicely
+    const states = ['PREPARING', 'APPROACHING', 'CLEARED', 'APPROACHING'];
+    setSig(states[curStep % states.length]);
+  } else {
+    clearInterval(advTimer);
+    const timeTaken = Math.round((Date.now() - dispatchedAt) / 1000);
+    document.getElementById('status-pill').textContent = 'ARRIVED';
+    document.getElementById('status-pill').className   = 'status-pill arrived';
+    document.getElementById('arrival-hospital-name').textContent = hospName;
+    document.getElementById('arrival-time-taken').textContent = fmtT(timeTaken);
+    document.getElementById('arrival-time-saved').textContent = '—';
+    document.getElementById('arrival-overlay').classList.add('show');
+    setTimeout(() => socket.disconnect(), 1200);
+  }
+}
+
+/* ═══ Route strip ════════════════════════════════════════════ */
+function renderStrip() {
+  const strip = document.getElementById('route-strip');
+  strip.innerHTML = '';
+  route.forEach((jid, i) => {
+    if (i > 0) { const s = document.createElement('span'); s.className = 'r-sep'; s.textContent = '›'; strip.appendChild(s); }
+    const p = document.createElement('div');
+    p.className = 'r-pill';
+    const last = i === route.length - 1;
+    if      (i < curStep)        p.classList.add('done');
+    else if (i === curStep)      p.classList.add('current');
+    else if (last)               p.classList.add('hospital');
+    else                         p.classList.add('upcoming');
+    p.textContent = last ? jid + ' 🏥' : jid;
+    strip.appendChild(p);
+  });
+  const cur = strip.querySelectorAll('.r-pill')[curStep];
+  if (cur) cur.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+}
+
+/* ═══ Arrow ══════════════════════════════════════════════════ */
+function applyArrow(idx) {
+  const dir = directions[idx];
+  if (!dir && idx < route.length - 1) {
+    applyTurn('STRAIGHT');
+    document.getElementById('j-from').textContent = route[idx] || '—';
+    document.getElementById('j-to').textContent   = route[idx + 1] || '—';
+    document.getElementById('distance-display').textContent = '200 m';
+    return;
+  }
+  if (!dir) {
+    applyTurn('ARRIVED');
+    document.getElementById('j-from').textContent = route[idx] || '—';
+    document.getElementById('j-to').textContent   = '🏥';
+    document.getElementById('distance-display').textContent = 'ARRIVED';
+    return;
+  }
+  applyTurn(dir.turn || 'STRAIGHT');
+  document.getElementById('j-from').textContent = dir.junction || route[idx] || '—';
+  document.getElementById('j-to').textContent   = dir.next_junction || route[idx + 1] || '🏥';
+  document.getElementById('distance-display').textContent = dir.distance_m > 0 ? dir.distance_m + ' m' : '—';
+}
+
+function applyTurn(turn) {
+  const map = ARROWS[turn] || ARROWS.STRAIGHT;
+  const el  = document.getElementById('direction-arrow');
+  // Fade out → change → fade in
+  el.style.opacity = '0';
+  setTimeout(() => {
+    el.textContent   = map.ch;
+    el.style.color   = map.color;
+    el.style.textShadow = `0 0 40px ${map.color}80`;
+    el.style.opacity = '1';
+  }, 150);
+}
+
+/* ═══ Signal / Traffic lights ════════════════════════════════ */
+function setSig(state) {
+  ['tl-red', 'tl-amber', 'tl-green'].forEach(id => document.getElementById(id).classList.remove('on'));
+  if      (state === 'LOCKED')                        document.getElementById('tl-red').classList.add('on');
+  else if (state === 'PREPARING' || state === 'APPROACHING') document.getElementById('tl-amber').classList.add('on');
+  else if (state === 'CLEARED')                       document.getElementById('tl-green').classList.add('on');
+
+  const banner = document.getElementById('signal-banner');
+  banner.className = 'sig-banner ' + state;
+  const MSG = {
+    CLEARED:    '🟢 Signal Cleared — GO',
+    PREPARING:  '🟡 Preparing Signal Corridor…',
+    APPROACHING:'🔵 Approaching Junction',
+    LOCKED:     '🔴 Signal Locked — HOLD',
+  };
+  banner.textContent = MSG[state] || '🟡 Preparing…';
+}
+
+/* ═══ Progress ═══════════════════════════════════════════════ */
+function updateProg() {
+  const total = Math.max(route.length - 1, 1);
+  const done  = Math.min(curStep, total);
+  const pct   = Math.round(done / total * 100);
+  document.getElementById('prog-fill').style.width  = pct + '%';
+  document.getElementById('prog-pct').textContent   = pct + '%';
+  document.getElementById('prog-jcts').textContent  = `${done} / ${total} junctions`;
+}
+
+/* ═══ Screen switch ══════════════════════════════════════════ */
+function showNav() {
+  document.getElementById('dispatch-screen').style.display = 'none';
+  document.getElementById('nav-screen').style.display      = 'flex';
+}
+
+/* ═══ Reroute banner ═════════════════════════════════════════ */
+function showReroute(msg) {
+  const b = document.getElementById('reroute-banner');
+  b.textContent = '🔄 REROUTING — ' + msg;
+  b.classList.add('show');
+  setTimeout(() => b.classList.remove('show'), 5000);
+}
+
+/* ═══ Periodic reroute check ═════════════════════════════════ */
+setInterval(() => {
+  if (route.length && document.getElementById('nav-screen').style.display !== 'none') {
+    socket.emit('reroute_check', { driver_id: DRIVER_ID, current_junction: route[curStep] || route[0] });
+  }
+}, 20000);
+
+/* ═══ Helpers ════════════════════════════════════════════════ */
+function fmtT(s) {
+  if (!s || s > 9000) return '--';
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+function fmtD(d) {
+  if (d == null) return '— m';
+  return d < 1000 ? Math.round(d) + ' m' : (d / 1000).toFixed(1) + ' km';
+}
+</script>
+</body>
+</html>

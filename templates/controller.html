@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Traffic Control Center — Ambulance System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    :root {
+      --bg:      #060a12;
+      --panel:   #0a1020;
+      --card:    #0e1828;
+      --card2:   #142035;
+      --border:  #1c2b44;
+      --accent:  #00d4ff;
+      --green:   #00ff88;
+      --amber:   #ffcc00;
+      --red:     #ff3355;
+      --text:    #e8edf5;
+      --muted:   #3a5070;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+
+    /* ── Header ──── */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 18px; height: 50px;
+      background: linear-gradient(90deg, #0a1020, #0e1830);
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .hdr-left { display: flex; align-items: center; gap: 10px; }
+    .live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); animation: sonar 2s ease-out infinite; }
+    @keyframes sonar { 0%{box-shadow:0 0 0 0 rgba(0,255,136,.6)} 70%{box-shadow:0 0 0 10px rgba(0,255,136,0)} 100%{box-shadow:0 0 0 0 rgba(0,255,136,0)} }
+    h1 { font-size: 13px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; }
+    .clock { font-family: 'JetBrains Mono', monospace; font-size: 14px; color: var(--accent); }
+    .btn-spawn {
+      padding: 7px 16px; background: rgba(0,212,255,.08); border: 1px solid var(--accent);
+      color: var(--accent); border-radius: 8px; font-size: 12px; font-weight: 700;
+      cursor: pointer; transition: all .2s; letter-spacing: .5px;
+    }
+    .btn-spawn:hover { background: var(--accent); color: #000; box-shadow: 0 0 18px rgba(0,212,255,.4); }
+
+    /* ── Layout ──── */
+    .main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Canvas panel ──── */
+    .map-panel { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #05080f; }
+    .panel-title { font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); padding: 7px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    #map-canvas { flex: 1; width: 100%; display: block; }
+    .legend-bar { display: flex; flex-wrap: wrap; gap: 14px; padding: 6px 14px; border-top: 1px solid var(--border); flex-shrink: 0; background: #080c18; }
+    .leg { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--muted); }
+
+    /* ── Right panel ──── */
+    .ctrl { width: 360px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--panel); }
+
+    /* Metrics */
+    .metrics { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .metric { padding: 10px 6px; text-align: center; background: var(--card); border-right: 1px solid var(--border); }
+    .metric:last-child { border-right: none; }
+    .metric-v { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 700; color: var(--accent); line-height: 1; }
+    .metric-l { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
+
+    .scroll { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+    .scroll::-webkit-scrollbar { width: 3px; }
+    .scroll::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .sec { font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+
+    /* Ambulance cards */
+    .amb-card {
+      background: var(--card); border: 1px solid var(--border); border-left: 4px solid transparent;
+      border-radius: 10px; padding: 10px 12px; transition: all .3s;
+    }
+    .amb-card.HIGH   { border-left-color: var(--red);   box-shadow: -2px 0 16px rgba(255,51,85,.08); }
+    .amb-card.MEDIUM { border-left-color: var(--amber); }
+    .amb-card.LOW    { border-left-color: var(--green); }
+    .amb-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .amb-id { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; }
+    .sev-badge { font-size: 8px; font-weight: 700; letter-spacing: 1px; padding: 2px 7px; border-radius: 12px; text-transform: uppercase; }
+    .sev-badge.HIGH   { background: rgba(255,51,85,.18);  color: var(--red);   }
+    .sev-badge.MEDIUM { background: rgba(255,204,0,.18);  color: var(--amber); }
+    .sev-badge.LOW    { background: rgba(0,255,136,.18);  color: var(--green); }
+    .amb-detail { font-size: 10px; color: var(--muted); line-height: 1.7; }
+    .amb-detail strong { color: var(--text); }
+    .amb-progress { height: 4px; background: var(--card2); border-radius: 2px; margin: 5px 0; overflow: hidden; }
+    .amb-prog-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--green)); border-radius: 2px; transition: width 1s ease; }
+    .amb-bottom { display: flex; align-items: center; justify-content: space-between; }
+    .status-tag { font-size: 8px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; }
+    .status-tag.EN_ROUTE    { background: rgba(0,212,255,.12); color: var(--accent); }
+    .status-tag.HELD        { background: rgba(255,204,0,.12);  color: var(--amber); }
+    .status-tag.ARRIVED     { background: rgba(0,255,136,.12);  color: var(--green); }
+    .status-tag.DISPATCHING { background: rgba(124,58,237,.12); color: #a78bfa; }
+    .amb-eta { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--accent); }
+    .amb-junc { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted); }
+
+    /* Conflict panel */
+    #conflict-panel { display: none; background: rgba(255,30,50,.05); border: 1px solid rgba(255,51,85,.4); border-radius: 10px; padding: 12px; animation: pSlide .3s ease; }
+    #conflict-panel.show { display: block; }
+    @keyframes pSlide { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+    /* Signal table */
+    .sig-wrap { max-height: 150px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+    .sig-wrap::-webkit-scrollbar { width: 3px; }
+    .sig-tbl { width: 100%; border-collapse: collapse; }
+    .sig-tbl th { font-size: 8px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); background: var(--card); padding: 5px 8px; text-align: left; position: sticky; top: 0; }
+    .sig-tbl td { font-size: 10px; padding: 4px 8px; border-top: 1px solid #0d1a2a; font-family: 'JetBrains Mono', monospace; }
+    .sig-pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 8px; font-weight: 700; }
+    .sig-pill.NORMAL           { background: rgba(0,212,255,.12); color: var(--accent); }
+    .sig-pill.AMBULANCE_GREEN  { background: rgba(0,255,136,.2);  color: var(--green); animation: sigGlow 1s ease infinite; }
+    .sig-pill.SPILLBACK_LOCKED { background: rgba(255,51,85,.2);  color: var(--red);   }
+    .sig-pill.DRAIN_OPEN       { background: rgba(255,204,0,.2);  color: var(--amber); }
+    @keyframes sigGlow { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 8px rgba(0,255,136,.4)} }
+
+    /* Speed */
+    .speed-row { display: flex; align-items: center; gap: 6px; }
+    .spd-lbl { font-size: 9px; color: var(--muted); }
+    .spd-btn { flex: 1; padding: 5px 0; font-size: 10px; font-weight: 700; background: var(--card); border: 1px solid var(--border); color: var(--muted); border-radius: 6px; cursor: pointer; transition: all .2s; }
+    .spd-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+    .spd-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
+
+    /* Event log */
+    #event-log { font-family: 'JetBrains Mono', monospace; font-size: 9px; line-height: 1.9; flex: 1; min-height: 100px; overflow-y: auto; background: #040710; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--muted); }
+    #event-log::-webkit-scrollbar { width: 3px; }
+    #event-log::-webkit-scrollbar-thumb { background: var(--border); }
+    .log-INFO  { color: #496080; }
+    .log-WARN  { color: var(--amber); }
+    .log-ALERT { color: var(--red); font-weight: 700; }
+    .log-ts    { color: #2a3f58; margin-right: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="hdr-left">
+    <div class="live-dot"></div>
+    <h1>Traffic Control Center</h1>
+  </div>
+  <span class="clock" id="clock">--:--:--</span>
+  <button class="btn-spawn" onclick="spawnDriver()">＋ Open Driver Tab</button>
+</header>
+
+<div class="main">
+
+  <!-- ═══ Map canvas ═══════════════════════════════════════════ -->
+  <div class="map-panel">
+    <div class="panel-title">
+      <div class="live-dot"></div>
+      LIVE MAP — SUMO Simulation
+    </div>
+    <canvas id="map-canvas"></canvas>
+    <div class="legend-bar">
+      <span class="leg">🔵 Normal</span>
+      <span class="leg">🟢 Corridor Active</span>
+      <span class="leg">🔴 Signal Locked</span>
+      <span class="leg">🟡 Drain Open</span>
+      <span class="leg">🚑 Ambulance</span>
+      <span class="leg">🚗 Traffic</span>
+    </div>
+  </div>
+
+  <!-- ═══ Right control panel ═══════════════════════════════════ -->
+  <div class="ctrl">
+    <div class="metrics">
+      <div class="metric"><div class="metric-v" id="m-active">0</div><div class="metric-l">🚑 Active</div></div>
+      <div class="metric"><div class="metric-v" id="m-saved" style="color:var(--green)">0s</div><div class="metric-l">⏱ Saved</div></div>
+      <div class="metric"><div class="metric-v" id="m-conf"  style="color:var(--red)">0</div><div class="metric-l">⚠ Conflicts</div></div>
+      <div class="metric"><div class="metric-v" id="m-sigs"  style="color:var(--amber)">0</div><div class="metric-l">🚦 Signals</div></div>
+    </div>
+
+    <div class="scroll">
+
+      <!-- Ambulances -->
+      <div class="sec">Active Ambulances</div>
+      <div id="amb-list">
+        <div style="font-size:11px;color:var(--muted);text-align:center;padding:14px;background:var(--card);border-radius:8px">No ambulances dispatched</div>
+      </div>
+
+      <!-- Conflict -->
+      <div class="sec">⚠ Conflict Resolution</div>
+      <div id="conflict-panel"></div>
+
+      <!-- Signal states -->
+      <div class="sec">🚦 Junction Signal Status</div>
+      <div class="sig-wrap">
+        <table class="sig-tbl">
+          <thead><tr><th>Junction</th><th>Signal</th><th>Density</th></tr></thead>
+          <tbody id="sig-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Speed -->
+      <div class="sec">Simulation Speed</div>
+      <div class="speed-row">
+        <span class="spd-lbl">Speed</span>
+        <button class="spd-btn" onclick="setSpd(0.5,this)">0.5×</button>
+        <button class="spd-btn active" onclick="setSpd(1,this)">1×</button>
+        <button class="spd-btn" onclick="setSpd(2,this)">2×</button>
+        <button class="spd-btn" onclick="setSpd(3,this)">3×</button>
+      </div>
+
+      <!-- Event log -->
+      <div class="sec">📋 Event Log</div>
+      <div id="event-log"></div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   SOCKET
+═══════════════════════════════════════════════════════════════ */
+const socket = io();
+socket.emit('join_controller');
+
+/* ═══════════════════════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════════════════════ */
+let junctionGraph  = {};    // { J1: {pos:[x,y], neighbors:[...]}, ... }
+let hospitalData   = {};
+let ambulanceMap   = {};    // { ambu_01: summaryObj }
+let latestFrame    = null;
+let driverCounter  = 1;
+let totalConflicts = 0;
+let totalSaved     = 0;
+let totalSignals   = 0;
+
+// Net boundary for SUMO coordinate mapping
+let netMinX = 0, netMinY = 0, netWidth = 1000, netHeight = 1000;
+
+/* ═══════════════════════════════════════════════════════════════
+   CANVAS
+═══════════════════════════════════════════════════════════════ */
+const canvas = document.getElementById('map-canvas');
+const ctx    = canvas.getContext('2d');
+let mapBounds = null;
+
+function resizeCanvas() {
+  canvas.width  = canvas.parentElement.clientWidth;
+  canvas.height = canvas.parentElement.clientHeight - 48;  // title + legend
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+/* ── Compute graph bounds from junction positions ── */
+function computeBounds() {
+  const xs = Object.values(junctionGraph).map(j => j.pos[0]);
+  const ys = Object.values(junctionGraph).map(j => j.pos[1]);
+  mapBounds = { xMin: Math.min(...xs), xMax: Math.max(...xs), yMin: Math.min(...ys), yMax: Math.max(...ys) };
+}
+
+/* ── Graph coords → canvas pixels ── */
+function toCanvas(wx, wy) {
+  if (!mapBounds) return { x: wx, y: wy };
+  const pad = 56;
+  const W   = canvas.width  - pad * 2;
+  const H   = canvas.height - pad * 2;
+  const { xMin, xMax, yMin, yMax } = mapBounds;
+  const scale = Math.min(W / (xMax - xMin || 1), H / (yMax - yMin || 1));
+  return {
+    x: pad + (wx - xMin) * scale,
+    y: canvas.height - pad - (wy - yMin) * scale,  // flip Y
+  };
+}
+
+/* ── SUMO raw coords → canvas pixels ── */
+function sumoToCanvas(sx, sy) {
+  const pad = 56;
+  const W   = canvas.width  - pad * 2;
+  const H   = canvas.height - pad * 2;
+  return {
+    x: pad + ((sx - netMinX) / netWidth)  * W,
+    y: canvas.height - pad - ((sy - netMinY) / netHeight) * H,  // flip Y
+  };
+}
+
+/* ── Map a vehicle to canvas based on its coord_space ── */
+function vehicleToCanvas(v) {
+  if (v.coord_space === 'sumo') return sumoToCanvas(v.x, v.y);
+  return toCanvas(v.x, v.y);  // 'graph' space — default
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SIGNAL THEME
+═══════════════════════════════════════════════════════════════ */
+const SIG = {
+  NORMAL:           { fill: '#00d4ff', glow: 'rgba(0,212,255,.3)',  icon: '🔵' },
+  AMBULANCE_GREEN:  { fill: '#00ff88', glow: 'rgba(0,255,136,.5)',  icon: '🟢' },
+  SPILLBACK_LOCKED: { fill: '#ff3355', glow: 'rgba(255,51,85,.5)',  icon: '🔴' },
+  DRAIN_OPEN:       { fill: '#ffcc00', glow: 'rgba(255,204,0,.4)',  icon: '🟡' },
+};
+
+/* ═══════════════════════════════════════════════════════════════
+   CONTINUOUS RENDER LOOP (requestAnimationFrame)
+   Vehicles pulse and corridor glows animate every frame.
+═══════════════════════════════════════════════════════════════ */
+let _t = 0;   // animation time counter
+
+function renderLoop() {
+  _t++;
+  if (Object.keys(junctionGraph).length) {
+    draw(latestFrame || { vehicles: [], signals: {}, junctions: {} });
+  }
+  requestAnimationFrame(renderLoop);
+}
+requestAnimationFrame(renderLoop);
+
+/* ═══════════════════════════════════════════════════════════════
+   DRAW
+═══════════════════════════════════════════════════════════════ */
+function draw(frame) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const signals  = frame.signals   || {};
+  const vehicles = frame.vehicles  || [];
+  const jinfo    = frame.junctions || {};
+
+  /* -- 1. Roads ------------------------------------------------- */
+  for (const [jid, jdata] of Object.entries(junctionGraph)) {
+    const p1 = toCanvas(jdata.pos[0], jdata.pos[1]);
+    for (const nid of jdata.neighbors) {
+      if (nid > jid && junctionGraph[nid]) {
+        const p2 = toCanvas(junctionGraph[nid].pos[0], junctionGraph[nid].pos[1]);
+        ctx.strokeStyle = '#162035';
+        ctx.lineWidth   = 5;
+        ctx.lineCap     = 'round';
+        ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+        // centre dash
+        ctx.strokeStyle = '#0e1a2a';
+        ctx.lineWidth   = 1.5;
+        ctx.setLineDash([6, 10]);
+        ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  /* -- 2. Ambulance route corridor glow ------------------------- */
+  const activeRoutes = Object.values(ambulanceMap)
+    .filter(a => a.status !== 'ARRIVED' && a.route && a.route.length > 1);
+
+  for (const amb of activeRoutes) {
+    const pulse = 0.55 + 0.45 * Math.sin(_t * 0.07);
+    ctx.strokeStyle = `rgba(0,255,136,${(0.3 + 0.3 * pulse).toFixed(2)})`;
+    ctx.lineWidth   = 12;
+    ctx.lineCap     = 'round';
+    ctx.lineJoin    = 'round';
+    ctx.shadowColor = '#00ff8888';
+    ctx.shadowBlur  = 20;
+    ctx.beginPath();
+    let started = false;
+    for (const jid of amb.route) {
+      const jd = junctionGraph[jid];
+      if (!jd) continue;
+      const p = toCanvas(jd.pos[0], jd.pos[1]);
+      started ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+      started = true;
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  /* -- 3. Junction circles + signal icons ----------------------- */
+  const R = 16;
+  for (const [jid, jdata] of Object.entries(junctionGraph)) {
+    const p   = toCanvas(jdata.pos[0], jdata.pos[1]);
+    const sig = signals[jid] || 'NORMAL';
+    const cfg = SIG[sig] || SIG.NORMAL;
+    const den = jinfo[jid]?.density || 0;
+
+    /* Signal-specific pulse halo */
+    if (sig === 'AMBULANCE_GREEN') {
+      const r = R + 8 + 5 * Math.sin(_t * 0.15);
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      g.addColorStop(0, 'rgba(0,255,136,.4)');
+      g.addColorStop(1, 'transparent');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    }
+    if (sig === 'SPILLBACK_LOCKED') {
+      const r = R + 5 + 3 * Math.abs(Math.sin(_t * 0.2));
+      ctx.fillStyle = 'rgba(255,51,85,.1)';
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    /* Glow ring */
+    const grd = ctx.createRadialGradient(p.x, p.y, 2, p.x, p.y, R + 10);
+    grd.addColorStop(0, cfg.glow);
+    grd.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd;
+    ctx.beginPath(); ctx.arc(p.x, p.y, R + 10, 0, Math.PI * 2); ctx.fill();
+
+    /* Circle body */
+    ctx.fillStyle   = '#0a1828';
+    ctx.strokeStyle = cfg.fill;
+    ctx.lineWidth   = 2.5;
+    ctx.shadowColor = cfg.fill + '80';
+    ctx.shadowBlur  = 8;
+    ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    /* Density arc */
+    if (den > 0.05) {
+      const dc = den > 0.7 ? '#ff3355' : den > 0.4 ? '#ffcc00' : '#00ff88';
+      ctx.strokeStyle = dc + '99';
+      ctx.lineWidth   = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, R + 5, -Math.PI / 2, -Math.PI / 2 + den * Math.PI * 2);
+      ctx.stroke();
+    }
+
+    /* Label */
+    ctx.fillStyle    = '#e8edf5';
+    ctx.font         = 'bold 8px Inter, sans-serif';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(jid, p.x, p.y);
+
+    /* Signal icon ABOVE circle — big and obvious */
+    ctx.font         = '14px serif';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(cfg.icon, p.x, p.y - R - 6);
+
+    /* Hospital marker */
+    for (const hdata of Object.values(hospitalData)) {
+      if (hdata.junction === jid) {
+        ctx.font = '16px serif';
+        ctx.fillText('🏥', p.x, p.y - R - 22);
+        break;
+      }
+    }
+  }
+
+  /* -- 4. Vehicles (emoji, correctly positioned) ---------------- */
+  for (const v of vehicles) {
+    const isAmb = v.type === 'ambulance' || String(v.id).startsWith('ambu');
+    const pos   = vehicleToCanvas(v);
+
+    // Skip if completely off-canvas (bad data guard)
+    if (pos.x < -50 || pos.x > canvas.width + 50 ||
+        pos.y < -50 || pos.y > canvas.height + 50) continue;
+
+    ctx.save();
+    ctx.translate(pos.x, pos.y);
+
+    if (isAmb) {
+      /* Ambulance pulsing glow */
+      const pulse = 0.5 + 0.5 * Math.sin(_t * 0.15);
+      const rGlow = 22 + 6 * pulse;
+      const glo = ctx.createRadialGradient(0, 0, 2, 0, 0, rGlow);
+      glo.addColorStop(0, `rgba(255,255,255,${(0.35 + 0.25 * pulse).toFixed(2)})`);
+      glo.addColorStop(1, 'transparent');
+      ctx.fillStyle = glo;
+      ctx.beginPath(); ctx.arc(0, 0, rGlow, 0, Math.PI * 2); ctx.fill();
+
+      /* White body rectangle with blue border */
+      ctx.fillStyle   = '#ffffff';
+      ctx.strokeStyle = '#00d4ff';
+      ctx.lineWidth   = 2;
+      ctx.shadowColor = '#00d4ff';
+      ctx.shadowBlur  = 14;
+      roundRect(ctx, -12, -7, 24, 14, 4);
+      ctx.fill(); ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      /* Red cross */
+      ctx.fillStyle    = '#ff3355';
+      ctx.font         = 'bold 9px sans-serif';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('+', 0, 0);
+
+      /* 🚑 emoji above */
+      const eSize = 18 + 4 * pulse;
+      ctx.font         = `${Math.round(eSize)}px serif`;
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('🚑', 0, -14);
+
+      /* ID label below */
+      ctx.fillStyle    = '#00d4ff';
+      ctx.font         = 'bold 8px Inter, sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.fillText(v.id, 0, 10);
+
+    } else {
+      /* Regular car — small emoji */
+      // Rotate by SUMO angle if available
+      if (v.angle !== undefined) {
+        const rad = ((v.angle || 0) - 90) * Math.PI / 180;
+        ctx.rotate(rad);
+      }
+      const emoji = '🚗';
+      ctx.font         = '13px serif';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(emoji, 0, 0);
+    }
+
+    ctx.restore();
+  }
+
+  /* -- 5. Empty state hint ------------------------------------- */
+  if (!vehicles.length && !activeRoutes.length) {
+    ctx.fillStyle    = 'rgba(58,80,112,.35)';
+    ctx.font         = '12px Inter, sans-serif';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Click  ＋ Open Driver Tab  then Dispatch to see ambulances move', canvas.width / 2, canvas.height - 18);
+  }
+}
+
+/* ── Round rect helper ── */
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.lineTo(x + w - r, y);
+  c.quadraticCurveTo(x + w, y, x + w, y + r);
+  c.lineTo(x + w, y + h - r);
+  c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  c.lineTo(x + r, y + h);
+  c.quadraticCurveTo(x, y + h, x, y + h - r);
+  c.lineTo(x, y + r);
+  c.quadraticCurveTo(x, y, x + r, y);
+  c.closePath();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SOCKET EVENTS
+═══════════════════════════════════════════════════════════════ */
+socket.on('net_boundary', b => {
+  netMinX   = b.minX;
+  netMinY   = b.minY;
+  netWidth  = Math.max(b.maxX - b.minX, 1);
+  netHeight = Math.max(b.maxY - b.minY, 1);
+});
+
+socket.on('junction_graph', data => {
+  junctionGraph = data.junctions;
+  hospitalData  = data.hospitals;
+  computeBounds();
+  buildSigTable();
+});
+
+socket.on('sumo_frame', frame => {
+  latestFrame = frame;                // RAF loop picks it up every frame
+  if (frame.junctions) updateSigTableDensity(frame.junctions, frame.signals);
+});
+
+socket.on('signal_changed', data => {
+  if (!latestFrame) return;
+  if (!latestFrame.signals) latestFrame.signals = {};
+  latestFrame.signals[data.junction] = data.new_state;
+  updateSigRow(data.junction, data.new_state);
+});
+
+socket.on('density_update', dens => {
+  if (!latestFrame) latestFrame = { vehicles: [], signals: {}, junctions: {} };
+  if (!latestFrame.junctions) latestFrame.junctions = {};
+  for (const [jid, d] of Object.entries(dens)) {
+    if (!latestFrame.junctions[jid]) latestFrame.junctions[jid] = {};
+    latestFrame.junctions[jid].density = d;
+  }
+});
+
+socket.on('ambulance_list', d => { for (const a of d.ambulances) ambulanceMap[a.id] = a; renderAmbs(); updateMetrics(); });
+
+socket.on('ambulance_added', d => {
+  ambulanceMap[d.id] = { ...ambulanceMap[d.id], ...d };
+  renderAmbs(); updateMetrics();
+  addLog(ts(), `🚑 ${d.id} dispatched → ${d.hospital || d.hospital_name}`, 'INFO');
+});
+
+socket.on('ambulance_updated', d => {
+  ambulanceMap[d.id] = { ...ambulanceMap[d.id], ...d };
+  // Inline update for speed (no full re-render)
+  const etaEl  = document.getElementById(`eta-${d.id}`);
+  const juncEl = document.getElementById(`junc-${d.id}`);
+  const progEl = document.getElementById(`prog-${d.id}`);
+  if (etaEl && d.eta_seconds)  etaEl.textContent  = formatT(d.eta_seconds);
+  if (juncEl && d.current_junction) juncEl.textContent = `@ ${d.current_junction}${d.next_junction ? ' → ' + d.next_junction : ''}`;
+  if (progEl) {
+    const route = d.route || ambulanceMap[d.id]?.route || [];
+    const step  = d.current_junction_index || 0;
+    const pct   = route.length > 1 ? Math.min(100, Math.round(step / (route.length - 1) * 100)) : 0;
+    progEl.style.width = pct + '%';
+  }
+});
+
+socket.on('ambulance_arrived', d => {
+  if (ambulanceMap[d.id]) ambulanceMap[d.id].status = 'ARRIVED';
+  totalSaved   += Math.max(0, d.time_saved || 0);
+  totalSignals += d.signals_overridden || 0;
+  // Fade out the card
+  const card = document.getElementById(`card-${d.id}`);
+  if (card) { card.style.transition = 'opacity .5s'; card.style.opacity = '0.3'; }
+  updateMetrics();
+  addLog(ts(), `🏥 ${d.id} ARRIVED — saved ${Math.round(d.time_saved || 0)}s`, 'INFO');
+});
+
+socket.on('conflict_detected', showConflict);
+socket.on('event_log', d => addLog(d.timestamp, d.message, d.level));
+
+/* ═══════════════════════════════════════════════════════════════
+   AMBULANCE CARDS
+═══════════════════════════════════════════════════════════════ */
+function renderAmbs() {
+  const el   = document.getElementById('amb-list');
+  const ambs = Object.values(ambulanceMap);
+  if (!ambs.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:14px;background:var(--card);border-radius:8px">No ambulances dispatched</div>';
+    return;
+  }
+  el.innerHTML = '';
+  for (const a of ambs) {
+    const sev   = a.severity || 'LOW';
+    const route = a.route || [];
+    const step  = a.current_junction_index || 0;
+    const total = Math.max(route.length - 1, 1);
+    const pct   = Math.min(100, Math.round(step / total * 100));
+    const card  = document.createElement('div');
+    card.className = `amb-card ${sev}`;
+    card.id = `card-${a.id}`;
+    card.innerHTML = `
+      <div class="amb-top">
+        <span class="amb-id">🚑 ${a.id}</span>
+        <span class="sev-badge ${sev}">${sev}</span>
+      </div>
+      <div class="amb-detail">
+        <span id="junc-${a.id}">@ ${a.current_junction || '—'}${a.next_junction ? ' → ' + a.next_junction : ''}</span>
+        &nbsp;|&nbsp; <strong>${a.hospital_name || a.hospital || '—'}</strong>
+      </div>
+      <div class="amb-progress"><div class="amb-prog-fill" id="prog-${a.id}" style="width:${pct}%"></div></div>
+      <div class="amb-bottom">
+        <span class="status-tag ${a.status || 'DISPATCHING'}">${a.status || 'DISPATCHING'}</span>
+        <span class="amb-junc">${pct}%</span>
+        <span class="amb-eta" id="eta-${a.id}">${formatT(a.eta_seconds || a.eta)}</span>
+      </div>`;
+    el.appendChild(card);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CONFLICT PANEL
+═══════════════════════════════════════════════════════════════ */
+function showConflict(d) {
+  totalConflicts++;
+  updateMetrics();
+  const panel  = document.getElementById('conflict-panel');
+  const scores = d.scores || {};
+  const wId = d.winner, lId = d.loser;
+  const wS  = scores[wId] || {}, lS = scores[lId] || {};
+
+  panel.innerHTML = `
+    <div style="color:var(--red);font-weight:700;font-size:11px;margin-bottom:8px;letter-spacing:1px">⚠ JUNCTION CONFLICT — ${d.junction}</div>
+    <div style="display:flex;gap:8px">
+      <div style="flex:1;padding:9px;background:var(--card);border-radius:8px;border:1px solid rgba(0,255,136,.3)">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--green)">✅ ${wId}</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.7">
+          Score: <b style="color:var(--text)">${(wS.total ?? d.winner_score ?? 0).toFixed(3)}</b><br>
+          Sev: ${(wS.severity||0).toFixed(2)} &nbsp; Prox: ${(wS.proximity||0).toFixed(2)} &nbsp; Wait: ${(wS.wait||0).toFixed(2)}
+        </div>
+      </div>
+      <div style="flex:1;padding:9px;background:var(--card);border-radius:8px;border:1px solid rgba(255,51,85,.3)">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--red)">❌ ${lId}</div>
+        <div style="font-size:9px;color:var(--muted);line-height:1.7">
+          Score: <b style="color:var(--text)">${(lS.total ?? d.loser_score ?? 0).toFixed(3)}</b><br>
+          Sev: ${(lS.severity||0).toFixed(2)} &nbsp; Prox: ${(lS.proximity||0).toFixed(2)} &nbsp; Wait: ${(lS.wait||0).toFixed(2)}
+        </div>
+      </div>
+    </div>
+    <div style="font-size:9px;color:var(--amber);margin-top:6px">⏸ ${d.action}</div>`;
+  panel.classList.add('show');
+  setTimeout(() => panel.classList.remove('show'), 20000);
+  addLog(ts(), `⚠ CONFLICT: ${wId} wins over ${lId} @ ${d.junction}`, 'ALERT');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SIGNAL TABLE
+═══════════════════════════════════════════════════════════════ */
+function buildSigTable() {
+  const tbody = document.getElementById('sig-body');
+  tbody.innerHTML = '';
+  for (const jid of Object.keys(junctionGraph).sort()) {
+    const tr = document.createElement('tr');
+    tr.id = 'sig-row-' + jid;
+    tr.innerHTML = `<td>${jid}</td>
+      <td><span class="sig-pill NORMAL" id="sigp-${jid}">NORMAL</span></td>
+      <td style="color:var(--muted)" id="sigd-${jid}">—</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function updateSigTableDensity(junctions, signals) {
+  for (const [jid, info] of Object.entries(junctions)) {
+    const den = info?.density ?? 0;
+    const del = document.getElementById('sigd-' + jid);
+    const sel = document.getElementById('sigp-' + jid);
+    if (del) { del.textContent = (den * 100).toFixed(0) + '%'; del.style.color = den > 0.7 ? 'var(--red)' : den > 0.4 ? 'var(--amber)' : 'var(--green)'; }
+    if (sel && signals && signals[jid]) updateSigRow(jid, signals[jid]);
+  }
+}
+
+function updateSigRow(jid, state) {
+  const el = document.getElementById('sigp-' + jid);
+  if (el) { el.className = `sig-pill ${state}`; el.textContent = state.replace(/_/g, ' '); }
+  // Also update latest frame signals
+  if (latestFrame) { if (!latestFrame.signals) latestFrame.signals = {}; latestFrame.signals[jid] = state; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EVENT LOG
+═══════════════════════════════════════════════════════════════ */
+function addLog(timestamp, msg, level) {
+  const log  = document.getElementById('event-log');
+  const line = document.createElement('div');
+  line.className = `log-${level || 'INFO'}`;
+  line.innerHTML = `<span class="log-ts">[${timestamp}]</span>${msg}`;
+  log.insertBefore(line, log.firstChild);
+  while (log.children.length > 100) log.removeChild(log.lastChild);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   METRICS
+═══════════════════════════════════════════════════════════════ */
+function updateMetrics() {
+  const active = Object.values(ambulanceMap).filter(a => a.status !== 'ARRIVED').length;
+  const sigs   = Object.values(ambulanceMap).reduce((s, a) => s + (a.signals_overridden || 0), 0);
+  document.getElementById('m-active').textContent = active;
+  document.getElementById('m-saved').textContent  = Math.round(totalSaved) + 's';
+  document.getElementById('m-conf').textContent   = totalConflicts;
+  document.getElementById('m-sigs').textContent   = sigs + totalSignals;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SPEED / SPAWN / CLOCK
+═══════════════════════════════════════════════════════════════ */
+function setSpd(s, btn) {
+  document.querySelectorAll('.spd-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  socket.emit('set_speed', { speed: s });
+}
+
+function spawnDriver() {
+  const id = 'ambu_' + String(driverCounter).padStart(2, '0');
+  driverCounter++;
+  window.open('/driver?id=' + id, '_blank');
+}
+
+setInterval(() => { document.getElementById('clock').textContent = new Date().toTimeString().slice(0, 8); }, 1000);
+document.getElementById('clock').textContent = new Date().toTimeString().slice(0, 8);
+
+/* ═══════════════════════════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════════════════════════ */
+function formatT(s) {
+  if (!s || s > 9000) return '--';
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+function ts() { return new Date().toTimeString().slice(0, 8); }
+
+/* ═══════════════════════════════════════════════════════════════
+   INITIAL LOAD
+═══════════════════════════════════════════════════════════════ */
+fetch('/api/junctions')
+  .then(r => r.json())
+  .then(data => {
+    if (!Object.keys(junctionGraph).length) {
+      junctionGraph = data.junctions;
+      hospitalData  = data.hospitals;
+      computeBounds();
+      buildSigTable();
+    }
+  });
+
+/* Debug helper — call from console: checkEdges() */
+window.checkEdges = () =>
+  fetch('/debug/edges').then(r => r.json()).then(d => { console.table(d.edges); console.log('Nodes:', d.nodes); });
+</script>
+</body>
+</html>
