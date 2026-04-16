@@ -130,7 +130,17 @@
     .log-WARN  { color: var(--amber); }
     .log-ALERT { color: var(--red); font-weight: 700; }
     .log-ts    { color: #2a3f58; margin-right: 4px; }
-  </style>
+
+    /* Clear/remove button for arrived ambulances */
+    .btn-clear {
+      display: none; margin-top: 6px; width: 100%; padding: 4px 0;
+      font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+      background: rgba(255,51,85,.12); border: 1px solid rgba(255,51,85,.4);
+      color: var(--red); border-radius: 6px; cursor: pointer; transition: all .2s;
+    }
+    .btn-clear:hover { background: rgba(255,51,85,.28); }
+    .btn-clear.visible { display: block; }
+    </style>
 </head>
 <body>
 
@@ -224,6 +234,7 @@ let junctionGraph  = {};    // { J1: {pos:[x,y], neighbors:[...]}, ... }
 let hospitalData   = {};
 let ambulanceMap   = {};    // { ambu_01: summaryObj }
 let latestFrame    = null;
+let trackedAmb     = null;  // click-to-track ambulance ID
 let driverCounter  = 1;
 let totalConflicts = 0;
 let totalSaved     = 0;
@@ -491,7 +502,24 @@ function draw(frame) {
     });
   }
 
-  /* -- 4. Vehicles as RECTANGLES -------------------------------- */
+  /* -- 4. Tracked ambulance corridor highlight (yellow dashed) -- */
+  if (trackedAmb && ambulanceMap[trackedAmb] && ambulanceMap[trackedAmb].route && ambulanceMap[trackedAmb].route.length > 1) {
+    const trAmb = ambulanceMap[trackedAmb];
+    ctx.strokeStyle = 'rgba(255,220,0,0.7)'; ctx.lineWidth = 8;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.shadowColor = 'rgba(255,220,0,0.5)'; ctx.shadowBlur = 16;
+    ctx.setLineDash([10, 6]);
+    ctx.beginPath(); let trGo = false;
+    for (const jid of trAmb.route) {
+      const jd = junctionGraph[jid]; if (!jd) continue;
+      const p = toCanvas(jd.pos[0], jd.pos[1]);
+      trGo ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); trGo = true;
+    }
+    ctx.stroke(); ctx.setLineDash([]); ctx.shadowBlur = 0;
+  }
+
+  /* -- 5. Vehicles as emoji icons ------------------------------ */
+  _vehiclePositions = [];
   for (const v of vehicles) {
     const isAmb   = v.type === 'ambulance' || String(v.id).startsWith('ambu');
     const isTruck = v.type === 'truck';
@@ -500,74 +528,40 @@ function draw(frame) {
     if (pos.x < -50 || pos.x > canvas.width + 50 ||
         pos.y < -50 || pos.y > canvas.height + 50) continue;
 
+    if (isAmb) _vehiclePositions.push({ id: v.id, x: pos.x, y: pos.y });
+
     ctx.save();
     ctx.translate(pos.x, pos.y);
 
-    // Rotate by angle if provided
-    if (v.angle !== undefined) {
-      const rad = ((v.angle || 0) - 90) * Math.PI / 180;
-      ctx.rotate(rad);
-    }
-
     if (isAmb) {
-      /* --- Ambulance: white 14×6 rectangle + blue pulsing circle --- */
-
-      // Team Shaan blue pulsing siren circle
+      /* --- Ambulance: 🚑 emoji + blue pulsing siren circle --- */
       const sirenR = 15 + 8 * Math.sin(Date.now() / 300);
-      ctx.strokeStyle = 'rgba(0,150,255,0.6)';
-      ctx.lineWidth   = 2;
-      ctx.shadowColor = 'rgba(0,150,255,0.4)';
-      ctx.shadowBlur  = 8;
-      ctx.beginPath();
-      ctx.arc(0, 0, sirenR, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,150,255,0.6)'; ctx.lineWidth = 2;
+      ctx.shadowColor = 'rgba(0,150,255,0.4)'; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.arc(0, 0, sirenR, 0, Math.PI * 2); ctx.stroke();
       ctx.shadowBlur = 0;
-
-      // White rectangle body 14×6
-      ctx.fillStyle   = '#ffffff';
-      ctx.strokeStyle = '#00d4ff';
-      ctx.lineWidth   = 1.5;
-      roundRect(ctx, -7, -3, 14, 6, 2);
-      ctx.fill(); ctx.stroke();
-
-      // Red cross (+)
-      ctx.fillStyle = '#ff3355';
-      ctx.font      = 'bold 6px sans-serif';
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('+', 0, 0);
-
-      // ID label (small, below)
-      ctx.save();
-      ctx.rotate(0);  // keep label upright
-      ctx.fillStyle    = '#00d4ff';
-      ctx.font         = 'bold 7px Inter, sans-serif';
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'top';
-      ctx.fillText(v.id, 0, 6);
-      ctx.restore();
+      if (v.id === trackedAmb) {
+        ctx.strokeStyle = 'rgba(255,220,0,0.9)'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(0, 0, sirenR + 5, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.font = '18px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('🚑', 0, 0);
+      ctx.fillStyle = '#00d4ff'; ctx.font = 'bold 7px Inter, sans-serif'; ctx.textBaseline = 'top';
+      ctx.fillText(v.id, 0, 11);
 
     } else if (isTruck) {
-      /* --- Truck: 18×6 orange rectangle --- */
-      ctx.fillStyle   = '#e07020';
-      ctx.strokeStyle = '#ff9040';
-      ctx.lineWidth   = 1;
-      roundRect(ctx, -9, -3, 18, 6, 2);
-      ctx.fill(); ctx.stroke();
+      ctx.font = '14px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('🚚', 0, 0);
 
     } else {
-      /* --- Car: 12×5 blue-grey rectangle --- */
-      ctx.fillStyle   = '#607d9a';
-      ctx.strokeStyle = '#8aacc8';
-      ctx.lineWidth   = 0.8;
-      roundRect(ctx, -6, -2.5, 12, 5, 1.5);
-      ctx.fill(); ctx.stroke();
+      ctx.font = '13px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('🚗', 0, 0);
     }
 
     ctx.restore();
   }
 
-  /* -- 5. Empty state hint ------------------------------------- */
+  /* -- 6. Empty state hint ------------------------------------- */
   if (!vehicles.length && !activeRoutes.length) {
     ctx.fillStyle    = 'rgba(58,80,112,.35)';
     ctx.font         = '12px Inter, sans-serif';
@@ -591,6 +585,22 @@ function roundRect(c, x, y, w, h, r) {
   c.quadraticCurveTo(x, y, x + r, y);
   c.closePath();
 }
+
+/* ── Vehicle hit-test registry (reset each draw frame) ── */
+let _vehiclePositions = [];
+
+/* ── Click-to-track: click an ambulance emoji to highlight its route ── */
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const cx = e.clientX - rect.left, cy = e.clientY - rect.top, HIT = 18;
+  let hit = null;
+  for (const vp of _vehiclePositions)
+    if (Math.abs(vp.x - cx) < HIT && Math.abs(vp.y - cy) < HIT) { hit = vp.id; break; }
+  if (hit) {
+    trackedAmb = (trackedAmb === hit) ? null : hit;
+    addLog(ts(), trackedAmb ? `🎯 Tracking ${trackedAmb}` : '🎯 Tracking cleared', 'INFO');
+  }
+});
 
 /* ═══════════════════════════════════════════════════════════════
    SOCKET EVENTS
@@ -658,11 +668,25 @@ socket.on('ambulance_arrived', d => {
   if (ambulanceMap[d.id]) ambulanceMap[d.id].status = 'ARRIVED';
   totalSaved   += Math.max(0, d.time_saved || 0);
   totalSignals += d.signals_overridden || 0;
-  // Fade out the card
-  const card = document.getElementById(`card-${d.id}`);
-  if (card) { card.style.transition = 'opacity .5s'; card.style.opacity = '0.3'; }
+  const card     = document.getElementById(`card-${d.id}`);
+  const statTag  = card ? card.querySelector('.status-tag') : null;
+  const clearBtn = card ? card.querySelector('.btn-clear')  : null;
+  if (statTag)  { statTag.className = 'status-tag ARRIVED'; statTag.textContent = 'ARRIVED'; }
+  if (clearBtn) clearBtn.classList.add('visible');
+  if (card)     card.style.borderLeftColor = 'var(--green)';
   updateMetrics();
   addLog(ts(), `🏥 ${d.id} ARRIVED — saved ${Math.round(d.time_saved || 0)}s`, 'INFO');
+});
+
+socket.on('ambulance_removed', d => {
+  delete ambulanceMap[d.id];
+  const card = document.getElementById(`card-${d.id}`);
+  if (card) card.remove();
+  if (trackedAmb === d.id) trackedAmb = null;
+  const el = document.getElementById('amb-list');
+  if (el && !el.children.length)
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:14px;background:var(--card);border-radius:8px">No ambulances dispatched</div>';
+  updateMetrics();
 });
 
 socket.on('conflict_detected', showConflict);
@@ -688,6 +712,7 @@ function renderAmbs() {
     const card  = document.createElement('div');
     card.className = `amb-card ${sev}`;
     card.id = `card-${a.id}`;
+    const isArrived = a.status === 'ARRIVED';
     card.innerHTML = `
       <div class="amb-top">
         <span class="amb-id">🚑 ${a.id}</span>
@@ -699,13 +724,16 @@ function renderAmbs() {
       </div>
       <div class="amb-progress"><div class="amb-prog-fill" id="prog-${a.id}" style="width:${pct}%"></div></div>
       <div class="amb-bottom">
-        <span class="status-tag ${a.status || 'DISPATCHING'}">${a.status || 'DISPATCHING'}</span>
+        <span class="status-tag ${a.status || 'DISPATCHING'}" id="stag-${a.id}">${a.status || 'DISPATCHING'}</span>
         <span class="amb-junc">${pct}%</span>
         <span class="amb-eta" id="eta-${a.id}">${formatT(a.eta_seconds || a.eta)}</span>
-      </div>`;
+      </div>
+      <button class="btn-clear${isArrived ? ' visible' : ''}" onclick="clearAmb('${a.id}')">🗑 Clear from Registry</button>`;
     el.appendChild(card);
   }
 }
+
+function clearAmb(id) { socket.emit('remove_ambulance', { id }); }
 
 /* ═══════════════════════════════════════════════════════════════
    CONFLICT PANEL
