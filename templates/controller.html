@@ -9,7 +9,7 @@
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <style>
     :root {
-      --bg:      #060a12;
+      --bg:      #0a0a0a;
       --panel:   #0a1020;
       --card:    #0e1828;
       --card2:   #142035;
@@ -48,7 +48,7 @@
     .main { display: flex; flex: 1; overflow: hidden; }
 
     /* ── Canvas panel ──── */
-    .map-panel { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #05080f; }
+    .map-panel { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #0a0a0a; }
     .panel-title { font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); padding: 7px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     #map-canvas { flex: 1; width: 100%; display: block; }
     .legend-bar { display: flex; flex-wrap: wrap; gap: 14px; padding: 6px 14px; border-top: 1px solid var(--border); flex-shrink: 0; background: #080c18; }
@@ -153,12 +153,12 @@
     </div>
     <canvas id="map-canvas"></canvas>
     <div class="legend-bar">
-      <span class="leg">🔵 Normal</span>
-      <span class="leg">🟢 Corridor Active</span>
-      <span class="leg">🔴 Signal Locked</span>
-      <span class="leg">🟡 Drain Open</span>
-      <span class="leg">🚑 Ambulance</span>
-      <span class="leg">🚗 Traffic</span>
+      <span class="leg"><span style="display:inline-block;width:8px;height:8px;background:#00d4ff;border-radius:50%;margin-right:3px"></span>Normal</span>
+      <span class="leg"><span style="display:inline-block;width:8px;height:8px;background:#00ff88;border-radius:50%;margin-right:3px"></span>Corridor Active</span>
+      <span class="leg"><span style="display:inline-block;width:8px;height:8px;background:#ff3355;border-radius:50%;margin-right:3px"></span>Signal Locked</span>
+      <span class="leg"><span style="display:inline-block;width:8px;height:8px;background:#ffcc00;border-radius:50%;margin-right:3px"></span>Drain Open</span>
+      <span class="leg"><span style="display:inline-block;width:14px;height:6px;background:#fff;border:1px solid #00d4ff;margin-right:3px"></span>Ambulance</span>
+      <span class="leg"><span style="display:inline-block;width:12px;height:5px;background:#607d9a;margin-right:3px"></span>Traffic</span>
     </div>
   </div>
 
@@ -288,10 +288,11 @@ function vehicleToCanvas(v) {
    SIGNAL THEME
 ═══════════════════════════════════════════════════════════════ */
 const SIG = {
-  NORMAL:           { fill: '#00d4ff', glow: 'rgba(0,212,255,.3)',  icon: '🔵' },
-  AMBULANCE_GREEN:  { fill: '#00ff88', glow: 'rgba(0,255,136,.5)',  icon: '🟢' },
-  SPILLBACK_LOCKED: { fill: '#ff3355', glow: 'rgba(255,51,85,.5)',  icon: '🔴' },
-  DRAIN_OPEN:       { fill: '#ffcc00', glow: 'rgba(255,204,0,.4)',  icon: '🟡' },
+  NORMAL:           { fill: '#00d4ff', glow: 'rgba(0,212,255,.3)',  dot: '#00d4ff' },
+  AMBULANCE_GREEN:  { fill: '#00ff88', glow: 'rgba(0,255,136,.5)',  dot: '#00ff88' },
+  SPILLBACK_LOCKED: { fill: '#ff3355', glow: 'rgba(255,51,85,.5)',  dot: '#ff3355' },
+  DRAIN_OPEN:       { fill: '#ffcc00', glow: 'rgba(255,204,0,.4)',  dot: '#ffcc00' },
+  AMBULANCE_OVERRIDE: { fill: '#ffffff', glow: 'rgba(255,255,255,.5)', dot: '#ffffff' },
 };
 
 /* ═══════════════════════════════════════════════════════════════
@@ -313,26 +314,54 @@ requestAnimationFrame(renderLoop);
    DRAW
 ═══════════════════════════════════════════════════════════════ */
 function draw(frame) {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  /* Dark SUMO-style background */
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const signals  = frame.signals   || {};
   const vehicles = frame.vehicles  || [];
   const jinfo    = frame.junctions || {};
+  const ROAD_W   = 20;   // dual-carriageway width in px
 
-  /* -- 1. Roads ------------------------------------------------- */
+  /* -- 1. Roads (SUMO style: dark asphalt + lane markings) ------ */
   for (const [jid, jdata] of Object.entries(junctionGraph)) {
     const p1 = toCanvas(jdata.pos[0], jdata.pos[1]);
     for (const nid of jdata.neighbors) {
       if (nid > jid && junctionGraph[nid]) {
         const p2 = toCanvas(junctionGraph[nid].pos[0], junctionGraph[nid].pos[1]);
-        ctx.strokeStyle = '#162035';
-        ctx.lineWidth   = 5;
-        ctx.lineCap     = 'round';
+
+        // Compute road angle for perpendicular offsets
+        const dx = p2.x - p1.x, dy = p2.y - p1.y;
+        const len = Math.sqrt(dx*dx + dy*dy) || 1;
+        const nx = -dy/len, ny = dx/len;  // unit normal
+        const half = ROAD_W / 2;
+
+        /* Road surface */
+        ctx.strokeStyle = '#1a1a1a';
+        ctx.lineWidth   = ROAD_W;
+        ctx.lineCap     = 'butt';
+        ctx.lineJoin    = 'round';
         ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-        // centre dash
-        ctx.strokeStyle = '#0e1a2a';
-        ctx.lineWidth   = 1.5;
-        ctx.setLineDash([6, 10]);
+
+        /* Edge lines — solid white 0.5px */
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+        ctx.lineWidth   = 0.5;
+        ctx.lineCap     = 'butt';
+        // left edge
+        ctx.beginPath();
+        ctx.moveTo(p1.x + nx*half, p1.y + ny*half);
+        ctx.lineTo(p2.x + nx*half, p2.y + ny*half);
+        ctx.stroke();
+        // right edge
+        ctx.beginPath();
+        ctx.moveTo(p1.x - nx*half, p1.y - ny*half);
+        ctx.lineTo(p2.x - nx*half, p2.y - ny*half);
+        ctx.stroke();
+
+        /* Centre line — dashed white 1px */
+        ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+        ctx.lineWidth   = 1;
+        ctx.setLineDash([6, 8]);
         ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
         ctx.setLineDash([]);
       }
@@ -345,12 +374,12 @@ function draw(frame) {
 
   for (const amb of activeRoutes) {
     const pulse = 0.55 + 0.45 * Math.sin(_t * 0.07);
-    ctx.strokeStyle = `rgba(0,255,136,${(0.3 + 0.3 * pulse).toFixed(2)})`;
-    ctx.lineWidth   = 12;
+    ctx.strokeStyle = `rgba(0,255,136,${(0.25 + 0.25 * pulse).toFixed(2)})`;
+    ctx.lineWidth   = ROAD_W + 6;
     ctx.lineCap     = 'round';
     ctx.lineJoin    = 'round';
     ctx.shadowColor = '#00ff8888';
-    ctx.shadowBlur  = 20;
+    ctx.shadowBlur  = 18;
     ctx.beginPath();
     let started = false;
     for (const jid of amb.route) {
@@ -364,19 +393,19 @@ function draw(frame) {
     ctx.shadowBlur = 0;
   }
 
-  /* -- 3. Junction circles + signal icons ----------------------- */
-  const R = 16;
+  /* -- 3. Junction circles + density arc + hospital marker ------ */
+  const R = 14;
   for (const [jid, jdata] of Object.entries(junctionGraph)) {
     const p   = toCanvas(jdata.pos[0], jdata.pos[1]);
     const sig = signals[jid] || 'NORMAL';
     const cfg = SIG[sig] || SIG.NORMAL;
     const den = jinfo[jid]?.density || 0;
 
-    /* Signal-specific pulse halo */
+    /* Pulse halo for ambulance green */
     if (sig === 'AMBULANCE_GREEN') {
       const r = R + 8 + 5 * Math.sin(_t * 0.15);
       const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
-      g.addColorStop(0, 'rgba(0,255,136,.4)');
+      g.addColorStop(0, 'rgba(0,255,136,.35)');
       g.addColorStop(1, 'transparent');
       ctx.fillStyle = g;
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
@@ -395,9 +424,9 @@ function draw(frame) {
     ctx.beginPath(); ctx.arc(p.x, p.y, R + 10, 0, Math.PI * 2); ctx.fill();
 
     /* Circle body */
-    ctx.fillStyle   = '#0a1828';
+    ctx.fillStyle   = '#111111';
     ctx.strokeStyle = cfg.fill;
-    ctx.lineWidth   = 2.5;
+    ctx.lineWidth   = 2;
     ctx.shadowColor = cfg.fill + '80';
     ctx.shadowBlur  = 8;
     ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, Math.PI * 2);
@@ -414,91 +443,125 @@ function draw(frame) {
       ctx.stroke();
     }
 
-    /* Label */
+    /* Junction label */
     ctx.fillStyle    = '#e8edf5';
-    ctx.font         = 'bold 8px Inter, sans-serif';
+    ctx.font         = 'bold 7px Inter, sans-serif';
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(jid, p.x, p.y);
 
-    /* Signal icon ABOVE circle — big and obvious */
-    ctx.font         = '14px serif';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillText(cfg.icon, p.x, p.y - R - 6);
-
     /* Hospital marker */
     for (const hdata of Object.values(hospitalData)) {
       if (hdata.junction === jid) {
-        ctx.font = '16px serif';
-        ctx.fillText('🏥', p.x, p.y - R - 22);
+        ctx.font = '14px serif';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText('🏥', p.x, p.y - R - 4);
         break;
       }
     }
+
+    /* -- Signal dots on each road entry to junction ------------- */
+    // For each neighbour, place a small signal dot near the junction
+    const DOT_R   = 6;    // dot radius in px
+    const DOT_OFF = R + 14; // offset from junction centre
+    const neighbors = jdata.neighbors || [];
+    const totalN    = neighbors.length;
+    neighbors.forEach((nid, idx) => {
+      const nd = junctionGraph[nid];
+      if (!nd) return;
+      const np = toCanvas(nd.pos[0], nd.pos[1]);
+      // Direction vector FROM neighbour TOWARD this junction
+      const ddx = p.x - np.x, ddy = p.y - np.y;
+      const dlen = Math.sqrt(ddx*ddx + ddy*ddy) || 1;
+      const dotX = p.x - (ddx/dlen) * DOT_OFF;
+      const dotY = p.y - (ddy/dlen) * DOT_OFF;
+
+      // Determine dot colour: ambulance override = white, sig dot colour otherwise
+      let dotColor = cfg.dot;
+      if (sig === 'AMBULANCE_OVERRIDE') dotColor = '#ffffff';
+
+      // Glow
+      ctx.shadowColor = dotColor;
+      ctx.shadowBlur  = 6;
+      ctx.fillStyle   = dotColor;
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, DOT_R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur  = 0;
+    });
   }
 
-  /* -- 4. Vehicles (emoji, correctly positioned) ---------------- */
+  /* -- 4. Vehicles as RECTANGLES -------------------------------- */
   for (const v of vehicles) {
-    const isAmb = v.type === 'ambulance' || String(v.id).startsWith('ambu');
-    const pos   = vehicleToCanvas(v);
+    const isAmb   = v.type === 'ambulance' || String(v.id).startsWith('ambu');
+    const isTruck = v.type === 'truck';
+    const pos     = vehicleToCanvas(v);
 
-    // Skip if completely off-canvas (bad data guard)
     if (pos.x < -50 || pos.x > canvas.width + 50 ||
         pos.y < -50 || pos.y > canvas.height + 50) continue;
 
     ctx.save();
     ctx.translate(pos.x, pos.y);
 
-    if (isAmb) {
-      /* Ambulance pulsing glow */
-      const pulse = 0.5 + 0.5 * Math.sin(_t * 0.15);
-      const rGlow = 22 + 6 * pulse;
-      const glo = ctx.createRadialGradient(0, 0, 2, 0, 0, rGlow);
-      glo.addColorStop(0, `rgba(255,255,255,${(0.35 + 0.25 * pulse).toFixed(2)})`);
-      glo.addColorStop(1, 'transparent');
-      ctx.fillStyle = glo;
-      ctx.beginPath(); ctx.arc(0, 0, rGlow, 0, Math.PI * 2); ctx.fill();
+    // Rotate by angle if provided
+    if (v.angle !== undefined) {
+      const rad = ((v.angle || 0) - 90) * Math.PI / 180;
+      ctx.rotate(rad);
+    }
 
-      /* White body rectangle with blue border */
-      ctx.fillStyle   = '#ffffff';
-      ctx.strokeStyle = '#00d4ff';
+    if (isAmb) {
+      /* --- Ambulance: white 14×6 rectangle + blue pulsing circle --- */
+
+      // Team Shaan blue pulsing siren circle
+      const sirenR = 15 + 8 * Math.sin(Date.now() / 300);
+      ctx.strokeStyle = 'rgba(0,150,255,0.6)';
       ctx.lineWidth   = 2;
-      ctx.shadowColor = '#00d4ff';
-      ctx.shadowBlur  = 14;
-      roundRect(ctx, -12, -7, 24, 14, 4);
-      ctx.fill(); ctx.stroke();
+      ctx.shadowColor = 'rgba(0,150,255,0.4)';
+      ctx.shadowBlur  = 8;
+      ctx.beginPath();
+      ctx.arc(0, 0, sirenR, 0, Math.PI * 2);
+      ctx.stroke();
       ctx.shadowBlur = 0;
 
-      /* Red cross */
-      ctx.fillStyle    = '#ff3355';
-      ctx.font         = 'bold 9px sans-serif';
+      // White rectangle body 14×6
+      ctx.fillStyle   = '#ffffff';
+      ctx.strokeStyle = '#00d4ff';
+      ctx.lineWidth   = 1.5;
+      roundRect(ctx, -7, -3, 14, 6, 2);
+      ctx.fill(); ctx.stroke();
+
+      // Red cross (+)
+      ctx.fillStyle = '#ff3355';
+      ctx.font      = 'bold 6px sans-serif';
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('+', 0, 0);
 
-      /* 🚑 emoji above */
-      const eSize = 18 + 4 * pulse;
-      ctx.font         = `${Math.round(eSize)}px serif`;
-      ctx.textBaseline = 'alphabetic';
-      ctx.fillText('🚑', 0, -14);
-
-      /* ID label below */
+      // ID label (small, below)
+      ctx.save();
+      ctx.rotate(0);  // keep label upright
       ctx.fillStyle    = '#00d4ff';
-      ctx.font         = 'bold 8px Inter, sans-serif';
+      ctx.font         = 'bold 7px Inter, sans-serif';
+      ctx.textAlign    = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText(v.id, 0, 10);
+      ctx.fillText(v.id, 0, 6);
+      ctx.restore();
+
+    } else if (isTruck) {
+      /* --- Truck: 18×6 orange rectangle --- */
+      ctx.fillStyle   = '#e07020';
+      ctx.strokeStyle = '#ff9040';
+      ctx.lineWidth   = 1;
+      roundRect(ctx, -9, -3, 18, 6, 2);
+      ctx.fill(); ctx.stroke();
 
     } else {
-      /* Regular car — small emoji */
-      // Rotate by SUMO angle if available
-      if (v.angle !== undefined) {
-        const rad = ((v.angle || 0) - 90) * Math.PI / 180;
-        ctx.rotate(rad);
-      }
-      const emoji = '🚗';
-      ctx.font         = '13px serif';
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(emoji, 0, 0);
+      /* --- Car: 12×5 blue-grey rectangle --- */
+      ctx.fillStyle   = '#607d9a';
+      ctx.strokeStyle = '#8aacc8';
+      ctx.lineWidth   = 0.8;
+      roundRect(ctx, -6, -2.5, 12, 5, 1.5);
+      ctx.fill(); ctx.stroke();
     }
 
     ctx.restore();
